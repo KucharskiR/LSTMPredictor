@@ -43,16 +43,14 @@ public class NNApp
 
 				while (recordReader.hasNext()) {
 					List<Writable> record = recordReader.next();
-					if (record.size() <= 1) {
-						double[] values = record.stream().limit(record.size() - 1) // Exclude the last value
-																					// (ExpectedMovement)
-								.mapToDouble(writable -> Double.parseDouble(writable.toString())).toArray();
+					double[] values = record.stream().limit(record.size() - 1) // Exclude the last value
+																				// (ExpectedMovement)
+							.mapToDouble(writable -> Double.parseDouble(writable.toString())).toArray();
 
-						dataList.add(values);
-					} else {
-						double expectedMovement = Double.parseDouble(record.get(record.size() - 1).toString());
-						labelList.add(new double[] { expectedMovement });
-					}
+					double expectedMovement = Double.parseDouble(record.get(record.size() - 1).toString());
+
+					dataList.add(values);
+					labelList.add(new double[] { expectedMovement });
 				}
 				
 				System.out.println(dataList.toString());
@@ -81,7 +79,8 @@ public class NNApp
 				int numOutputs = 1;
 				int numEpochs = 10;
 
-				MultiLayerConfiguration builder = new NeuralNetConfiguration.Builder().seed(123)
+				MultiLayerConfiguration builder = new NeuralNetConfiguration.Builder()
+						.seed(123)
 						.optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
 						.weightInit(WeightInit.XAVIER).updater(new Adam(0.01)).list()
 						.layer(new LSTM.Builder().nIn(numInputs).nOut(lstmLayerSize).activation(Activation.TANH)
