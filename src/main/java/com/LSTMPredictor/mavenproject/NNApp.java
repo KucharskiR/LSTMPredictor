@@ -9,12 +9,13 @@ import org.datavec.api.records.reader.impl.csv.CSVRecordReader;
 import org.datavec.api.split.FileSplit;
 import org.datavec.api.writable.Writable;
 import org.deeplearning4j.datasets.iterator.ExistingDataSetIterator;
+import org.deeplearning4j.eval.Evaluation;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
 import org.deeplearning4j.nn.conf.layers.DenseLayer;
 import org.deeplearning4j.nn.conf.layers.LSTM;
-import org.deeplearning4j.nn.conf.layers.RnnOutputLayer;
+import org.deeplearning4j.nn.conf.layers.OutputLayer;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
 import org.nd4j.common.io.ClassPathResource;
@@ -32,81 +33,223 @@ public class NNApp
 {
 	public static void main(String[] args) {
 		// Load and preprocess data from .csv file
-		String filePath;
-		try {
-			filePath = new ClassPathResource("data.csv").getFile().getPath();
-			try (RecordReader recordReader = new CSVRecordReader(';')) {
-				recordReader.initialize(new FileSplit(new java.io.File(filePath)));
 
-				List<double[]> dataList = new ArrayList<>();
-				List<double[]> labelList = new ArrayList<>();
+		// Convert data to DataSetIterator
+//				DataSet dataSet = new DataSet(features, labels);
+//				DataSet dataSet = getTrainCsv("data.csv");
+		DataSet dataSet = getTrain();
+		DataSet evalData = getEvaluate();
 
-				while (recordReader.hasNext()) {
-					List<Writable> record = recordReader.next();
-					double[] values = record.stream().limit(record.size() - 1) // Exclude the last value
-																				// (ExpectedMovement)
-							.mapToDouble(writable -> Double.parseDouble(writable.toString())).toArray();
-
-					double expectedMovement = Double.parseDouble(record.get(record.size() - 1).toString());
-
-					dataList.add(values);
-					labelList.add(new double[] { expectedMovement });
-				}
-				
-				System.out.println(dataList.toString());
-				System.out.println(labelList.toString());
-
-				INDArray features = Nd4j.create(dataList.toArray(new double[0][0]));
-				INDArray labels = Nd4j.create(labelList.toArray(new double[0][0]));
-				
-				// Convert data to DataSetIterator
-				DataSet dataSet = new DataSet(features, labels);
-				DataSetIterator iterator = new ExistingDataSetIterator(dataSet);
-
-				// Normalize the data using MinMaxScaler
-				NormalizerMinMaxScaler normalizer = new NormalizerMinMaxScaler();
-				normalizer.fitLabel(true);
-				normalizer.fit(dataSet);
-				normalizer.transform(features);
+		// Normalize the data using MinMaxScaler
+		NormalizerMinMaxScaler normalizer = new NormalizerMinMaxScaler();
+		normalizer.fitLabel(true);
+		normalizer.fit(dataSet);
+		normalizer.transform(dataSet);
+		normalizer.fit(evalData);
+		normalizer.transform(evalData);
 //				normalizer.transform(labels);
 
-				
+		
+		DataSetIterator iterator = new ExistingDataSetIterator(dataSet);
+		DataSetIterator evaluationIterator = new ExistingDataSetIterator(evalData);
 
 // Build and train the LSTM network with an additional layer
-				int numInputs = 2;
-				int lstmLayerSize = 50;
-				int additionalLayerSize = 30; // Size of the additional hidden layer
-				int numOutputs = 1;
-				int numEpochs = 10;
+		int batchSize = 5;
+		int numInputs = 2;
+		int lstmLayerSize = 50;
+		int additionalLayerSize = 30; // Size of the additional hidden layer
+		int numOutputs = 1;
+		int numEpochs = 50;
 
-				MultiLayerConfiguration builder = new NeuralNetConfiguration.Builder()
-						.seed(123)
-						.optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
-						.weightInit(WeightInit.XAVIER).updater(new Adam(0.01)).list()
-						.layer(new LSTM.Builder().nIn(numInputs).nOut(lstmLayerSize).activation(Activation.TANH)
-								.build())
-						.layer(new DenseLayer.Builder().nIn(lstmLayerSize).nOut(additionalLayerSize)
-								.activation(Activation.RELU).build())
-						.layer(new RnnOutputLayer.Builder(LossFunctions.LossFunction.MEAN_SQUARED_LOGARITHMIC_ERROR)
+		MultiLayerConfiguration builder = new NeuralNetConfiguration.Builder().seed(123)
+				.optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).weightInit(WeightInit.XAVIER)
+				.updater(new Adam(0.01)).list()
+				.layer(0, new LSTM.Builder().nIn(numInputs).nOut(lstmLayerSize).activation(Activation.TANH).build())
+				.layer(1, new DenseLayer.Builder().nIn(lstmLayerSize).nOut(additionalLayerSize)
+						.activation(Activation.RELU).build())
+//						.layer(2, new RnnOutputLayer.Builder(LossFunctions.LossFunction.MEAN_SQUARED_LOGARITHMIC_ERROR)
+				.layer(2,
+						new OutputLayer.Builder(LossFunctions.LossFunction.MEAN_SQUARED_LOGARITHMIC_ERROR)
 								.activation(Activation.IDENTITY).nIn(additionalLayerSize) // Input size from the
-																							// additional layer
 								.nOut(numOutputs).build())
-						.build();
+				.build();
 
-				MultiLayerNetwork network = new MultiLayerNetwork(builder);
-				network.init();
+		MultiLayerNetwork network = new MultiLayerNetwork(builder);
+		network.init();
 
-				for (int i = 0; i < numEpochs; i++) {
-					iterator.reset();
-					network.fit(iterator);
-				}
-			} catch (NumberFormatException | InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
+		for (int i = 0; i < numEpochs; i++) {
+			iterator.reset();
+			iterator.next(batchSize);
+			network.fit(iterator);
+			System.out.println(network.getIterationCount());
+		}
+
+		// Create an Evaluation object
+//		        Evaluation evaluation = new Evaluation();
+		Evaluation evaluation = new Evaluation();
+
+		// Iterate through the evaluation dataset and make predictions
+		while (evaluationIterator.hasNext()) {
+			DataSet evaluationData = evaluationIterator.next();
+			INDArray evalFeatures = evaluationData.getFeatures();
+			INDArray evalLabels = evaluationData.getLabels();
+
+			// Make predictions using the trained network
+			INDArray predictions = network.output(evalFeatures, false);
+
+			// Evaluate the predictions against the labels
+			evaluation.eval(evalLabels, predictions);
+		}
+
+		// Print the evaluation metrics
+		System.out.println(evaluation.stats());
+		System.out.println(evaluation.confusionToString());
+	}
+	
+	private static DataSet getTrainCsv(String path) {
+		// TODO Auto-generated method stub
+		String filePath = path;
+		try {
+			filePath = new ClassPathResource("data.csv").getFile().getPath();
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+		try (RecordReader recordReader = new CSVRecordReader(';')) {
+			recordReader.initialize(new FileSplit(new java.io.File(filePath)));
+
+			List<double[]> dataList = new ArrayList<>();
+			List<double[]> labelList = new ArrayList<>();
+
+			while (recordReader.hasNext()) {
+				List<Writable> record = recordReader.next();
+				double[] values = record.stream().limit(record.size() - 1) // Exclude the last value
+						// (ExpectedMovement)
+						.mapToDouble(writable -> Double.parseDouble(writable.toString())).toArray();
+
+				double expectedMovement = Double.parseDouble(record.get(record.size() - 1).toString());
+
+				dataList.add(values);
+				labelList.add(new double[] { expectedMovement });
+			}
+
+			System.out.println(dataList.toString());
+			System.out.println(labelList.toString());
+
+			INDArray features = Nd4j.create(dataList.toArray(new double[0][0]));
+			INDArray labels = Nd4j.create(labelList.toArray(new double[0][0]));
+
+			return new DataSet(features, labels);
+		} catch (Exception e) {
+			return null;
+		}
 	}
+
+	public static DataSet getTrain() {
+	        double[][][] inputArray = {
+//	            {{18.7}, {181}},
+//	            {{17.4}, {186}},
+//	            {{18}, {195}},
+//	            {{19.3}, {193}},
+//	            {{20.6}, {190}},
+//	            {{17.8}, {181}},
+//	            {{19.6}, {195}},
+//	            {{18.1}, {193}},
+//	            {{20.2}, {190}},
+//	            {{17.1}, {186}},
+	            {{1}, {1}},
+	            {{2}, {2}},
+	            {{3}, {3}},
+	            {{4}, {4}},
+	            {{5}, {5}},
+	            {{6}, {6}},
+	            {{7}, {7}},
+	            {{8}, {8}},
+	            {{9}, {9}},
+	            {{10}, {10}},
+	
+	        };
+	        
+	        double[][] outputArray = {
+//	                {3750},
+//	                {3800},
+//	                {3250},
+//	                {3450},
+//	                {3650},
+//	                {3625},
+//	                {4675},
+//	                {3475},
+//	                {4250},
+//	                {3300},
+	        		{1},
+	        		{2},
+	        		{3},
+	        		{4},
+	        		{5},
+	        		{6},
+	        		{7},
+	        		{8},
+	        		{9},
+	        		{10},
+	     
+	        };
+	        
+	        INDArray input = Nd4j.create(inputArray);
+	        INDArray labels = Nd4j.create(outputArray);
+	        
+	        return new DataSet(input, labels);
+	    }
+	 
+	 public static DataSet getEvaluate() {
+	        double[][][] inputArray = {
+//	            {{18.7}, {181}},
+//	            {{17.4}, {186}},
+//	            {{18}, {195}},
+//	            {{19.3}, {193}},
+//	            {{15}, {190}},
+//	            {{17.8}, {181}},
+//	            {{19.6}, {195}},
+//	            {{56}, {205}},
+//	            {{20.2}, {190}},
+//	            {{17.1}, {186}},
+	            {{1}, {1}},
+	            {{2}, {2}},
+	            {{3}, {3}},
+	            {{4}, {4}},
+	            {{5}, {5}},
+	            {{6}, {6}},
+	            {{7}, {7}},
+	            {{8}, {8}},
+	            {{52}, {52}},
+	            {{135}, {135}},
+	        };
+	        
+	        double[][] outputArray = {
+//	                {3750},
+//	                {3800},
+//	                {3250},
+//	                {3450},
+//	                {3650},
+//	                {3625},
+//	                {4675},
+//	                {3475},
+//	                {4250},
+//	                {3300},
+	        		{1},
+	        		{2},
+	        		{3},
+	        		{4},
+	        		{5},
+	        		{6},
+	        		{7},
+	        		{8},
+	        		{52},
+	        		{135},
+	        };
+	        
+	        INDArray input = Nd4j.create(inputArray);
+	        INDArray labels = Nd4j.create(outputArray);
+	        
+	        return new DataSet(input, labels);
+	 }
 }
