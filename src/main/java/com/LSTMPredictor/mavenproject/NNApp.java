@@ -18,6 +18,9 @@ import org.deeplearning4j.nn.conf.layers.LSTM;
 import org.deeplearning4j.nn.conf.layers.OutputLayer;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
+import org.deeplearning4j.optimize.api.InvocationType;
+import org.deeplearning4j.optimize.listeners.EvaluativeListener;
+import org.deeplearning4j.optimize.listeners.ScoreIterationListener;
 import org.nd4j.common.io.ClassPathResource;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.api.ndarray.INDArray;
@@ -59,51 +62,57 @@ public class NNApp
 		int lstmLayerSize = 50;
 		int additionalLayerSize = 30; // Size of the additional hidden layer
 		int numOutputs = 1;
-		int numEpochs = 50;
+		int numEpochs = 5;
 
 		MultiLayerConfiguration builder = new NeuralNetConfiguration.Builder().seed(123)
-				.optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT).weightInit(WeightInit.XAVIER)
+				.optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
+				.weightInit(WeightInit.XAVIER)
 				.updater(new Adam(0.01)).list()
-				.layer(0, new LSTM.Builder().nIn(numInputs).nOut(lstmLayerSize).activation(Activation.TANH).build())
-				.layer(1, new DenseLayer.Builder().nIn(lstmLayerSize).nOut(additionalLayerSize)
-						.activation(Activation.RELU).build())
+				.layer(0, new LSTM.Builder()
+						.nIn(numInputs)
+						.nOut(lstmLayerSize)
+						.activation(Activation.TANH)
+						.build())
+				.layer(1, new DenseLayer.Builder()
+						.nIn(lstmLayerSize)
+						.nOut(additionalLayerSize)
+						.activation(Activation.RELU)
+						.build())
 //						.layer(2, new RnnOutputLayer.Builder(LossFunctions.LossFunction.MEAN_SQUARED_LOGARITHMIC_ERROR)
-				.layer(2,
-						new OutputLayer.Builder(LossFunctions.LossFunction.MEAN_SQUARED_LOGARITHMIC_ERROR)
-								.activation(Activation.IDENTITY).nIn(additionalLayerSize) // Input size from the
+				.layer(2, new OutputLayer.Builder(LossFunctions.LossFunction.MEAN_SQUARED_LOGARITHMIC_ERROR)
+								.activation(Activation.IDENTITY)
+								.nIn(additionalLayerSize) // Input size from the
 								.nOut(numOutputs).build())
 				.build();
 
 		MultiLayerNetwork network = new MultiLayerNetwork(builder);
 		network.init();
-
-		for (int i = 0; i < numEpochs; i++) {
-			iterator.reset();
-			iterator.next(batchSize);
-			network.fit(iterator);
-			System.out.println(network.getIterationCount());
-		}
+		network.setListeners(new ScoreIterationListener(10), new EvaluativeListener(evaluationIterator, 1, InvocationType.EPOCH_END)); //Print score every 10 iterations and evaluate on test set every epoch
+//		for (int i = 0; i < numEpochs; i++) {
+//			iterator.reset();
+////			iterator.next(batchSize);
+		network.fit(iterator, numEpochs);
+//		}
 
 		// Create an Evaluation object
 //		        Evaluation evaluation = new Evaluation();
-		Evaluation evaluation = new Evaluation();
-
-		// Iterate through the evaluation dataset and make predictions
-		while (evaluationIterator.hasNext()) {
-			DataSet evaluationData = evaluationIterator.next();
-			INDArray evalFeatures = evaluationData.getFeatures();
-			INDArray evalLabels = evaluationData.getLabels();
-
-			// Make predictions using the trained network
-			INDArray predictions = network.output(evalFeatures, false);
-
-			// Evaluate the predictions against the labels
-			evaluation.eval(evalLabels, predictions);
-		}
-
-		// Print the evaluation metrics
-		System.out.println(evaluation.stats());
-		System.out.println(evaluation.confusionToString());
+//		Evaluation evaluation = new Evaluation();
+//
+//		// Iterate through the evaluation dataset and make predictions
+//		while (evaluationIterator.hasNext()) {
+//			DataSet evaluationData = evaluationIterator.next();
+//			INDArray evalFeatures = evaluationData.getFeatures();
+//			INDArray evalLabels = evaluationData.getLabels();
+//
+//			// Make predictions using the trained network
+//			INDArray predictions = network.output(evalFeatures, false);
+//
+//			// Evaluate the predictions against the labels
+//			evaluation.eval(evalLabels, predictions);
+//		}
+//
+//		// Print the evaluation metrics
+//		System.out.println(evaluation.stats());
 	}
 	
 	private static DataSet getTrainCsv(String path) {
@@ -181,16 +190,16 @@ public class NNApp
 //	                {3475},
 //	                {4250},
 //	                {3300},
-	        		{1},
 	        		{2},
-	        		{3},
 	        		{4},
-	        		{5},
 	        		{6},
-	        		{7},
 	        		{8},
-	        		{9},
 	        		{10},
+	        		{12},
+	        		{14},
+	        		{16},
+	        		{18},
+	        		{20},
 	     
 	        };
 	        
@@ -212,14 +221,14 @@ public class NNApp
 //	            {{56}, {205}},
 //	            {{20.2}, {190}},
 //	            {{17.1}, {186}},
-	            {{1}, {1}},
+	            {{18}, {18}},
 	            {{2}, {2}},
 	            {{3}, {3}},
 	            {{4}, {4}},
 	            {{5}, {5}},
 	            {{6}, {6}},
 	            {{7}, {7}},
-	            {{8}, {8}},
+	            {{63}, {63}},
 	            {{52}, {52}},
 	            {{135}, {135}},
 	        };
@@ -235,16 +244,16 @@ public class NNApp
 //	                {3475},
 //	                {4250},
 //	                {3300},
-	        		{1},
-	        		{2},
-	        		{3},
+	          		{36},
 	        		{4},
-	        		{5},
 	        		{6},
-	        		{7},
 	        		{8},
-	        		{52},
-	        		{135},
+	        		{10},
+	        		{12},
+	        		{14},
+	        		{126},
+	        		{104},
+	        		{270},
 	        };
 	        
 	        INDArray input = Nd4j.create(inputArray);
